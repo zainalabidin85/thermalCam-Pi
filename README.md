@@ -86,8 +86,3 @@ been left at the default 100kHz. `/temperature_data`, `/pixel_temp`, and
 `/temp_range` all return `status: "ERROR"` / `null` values on frames where the
 last poll failed — callers should handle that rather than assume a reading is
 always available.
-
-## Jetson integration
-
-See [`../JETSON/README.md`](../JETSON/README.md) — `v2_thermalNet.py` consumes
-`/video_feed` and `/pixel_temp` from this app to detect animals and flag fever.
