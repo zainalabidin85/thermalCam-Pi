@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thermal Vision · MLX90614</title>
+    <style>
+        :root {
+            --overlay-bg: rgba(0, 0, 0, 0.5);
+            --overlay-bg-light: rgba(20, 20, 20, 0.6);
+            --text-primary: rgba(255, 255, 255, 0.95);
+            --text-secondary: rgba(255, 255, 255, 0.65);
+            --accent-blue: #0a84ff;
+            --accent-green: #30d158;
+            --accent-red: #ff453a;
+            --border-light: rgba(255, 255, 255, 0.1);
+            --font-sf: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            --animation-timing: 0.2s ease;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-sf);
+            background: #000;
+            color: var(--text-primary);
+            line-height: 1.3;
+            -webkit-font-smoothing: antialiased;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .video-container {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: #000;
+        }
+
+        .video-feed {
+            width: 100%; height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* Top bar: FPS + Gear */
+        .top-bar {
+            position: fixed;
+            top: 16px; right: 16px;
+            display: flex;
+            gap: 8px;
+            z-index: 20;
+            align-items: center;
+        }
+
+        .fps-chip {
+            background: var(--overlay-bg);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            padding: 6px 12px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 500;
+            border: 1px solid var(--border-light);
+            color: var(--text-secondary);
+            letter-spacing: 0.2px;
+            pointer-events: none;
+        }
+        .fps-value { color: white; font-weight: 600; }
+
+        /* Gear button */
+        .gear-btn {
+            background: var(--overlay-bg);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid var(--border-light);
+            border-radius: 50%;
+            width: 32px; height: 32px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            color: var(--text-secondary);
+        }
+        .gear-btn:hover { background: rgba(255,255,255,0.12); color: white; }
+        .gear-btn.active {
+            border-color: rgba(10,132,255,0.5);
+            color: var(--accent-blue);
+            background: rgba(10,132,255,0.12);
+        }
+        .gear-btn svg { transition: transform 0.3s ease; }
+        .gear-btn.active svg { transform: rotate(60deg); }
+        .gear-btn.rec-indicator {
+            border-color: rgba(255, 69, 58, 0.5);
+            background: rgba(255, 69, 58, 0.12);
+            color: var(--accent-red);
+            animation: blink 1s step-start infinite;
+        }
+        .gear-btn.rec-indicator.active svg { transform: none; }
+
+        /* Folder (recordings) button - same look as gear-btn */
+        .folder-btn {
+            background: var(--overlay-bg);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid var(--border-light);
+            border-radius: 50%;
+            width: 32px; height: 32px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            color: var(--text-secondary);
+        }
+        .folder-btn:hover { background: rgba(255,255,255,0.12); color: white; }
+
+        /* Settings panel */
+        .settings-panel {
+            position: fixed;
+            top: 56px; right: 16px;
+            width: 240px;
+            background: rgba(18, 18, 20, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-light);
+            border-radius: 16px;
+            z-index: 25;
+            overflow: hidden;
+            opacity: 0;
+            transform: translateY(-8px) scale(0.97);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        .settings-panel.visible {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            pointer-events: all;
+        }
+
+        .settings-section {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+        }
+        .settings-section:last-child { border-bottom: none; }
+
+        .settings-section-title {
+            font-size: 10px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.35);
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        /* Record inside settings */
+        .record-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            padding: 9px 12px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-family: var(--font-sf);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .record-btn:hover { background: rgba(255,255,255,0.1); color: white; }
+        .record-btn.recording {
+            border-color: rgba(255, 69, 58, 0.4);
+            background: rgba(255, 69, 58, 0.08);
+            color: var(--accent-red);
+        }
+        .record-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            flex-shrink: 0;
+        }
+        .record-btn.recording .record-dot { animation: blink 1s step-start infinite; }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        .record-filename-inner {
+            font-size: 10px;
+            color: rgba(255,255,255,0.3);
+            margin-top: 6px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: none;
+        }
+        .record-filename-inner.visible { display: block; }
+
+        /* Sharpen sliders inside settings */
+        .sharpen-row { margin-bottom: 10px; }
+        .sharpen-row:last-child { margin-bottom: 0; }
+        .sharpen-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: 5px;
+        }
+        .sharpen-label span:last-child { color: white; font-weight: 500; min-width: 24px; text-align: right; }
+        input[type=range].sharpen-slider {
+            width: 100%; height: 3px;
+            -webkit-appearance: none; appearance: none;
+            background: rgba(255,255,255,0.15);
+            border-radius: 2px; outline: none; cursor: pointer;
+        }
+        input[type=range].sharpen-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            cursor: pointer;
+        }
+        .sharpen-off-label {
+            font-size: 10px;
+            color: rgba(255,255,255,0.25);
+            text-align: center;
+            margin-top: 4px;
+            display: none;
+        }
+
+        /* Logout inside settings */
+        .logout-btn {
+            display: block;
+            width: 100%;
+            padding: 9px 12px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-family: var(--font-sf);
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: left;
+        }
+        .logout-btn:hover { background: rgba(255, 69, 58, 0.1); border-color: rgba(255,69,58,0.3); color: var(--accent-red); }
+
+        /* Crosshair */
+        .crosshair {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px; height: 40px;
+            z-index: 15;
+            pointer-events: none;
+        }
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.7);
+            box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+        }
+        .crosshair::before { width: 1px; height: 20px; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+        .crosshair::after  { width: 20px; height: 1px; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+
+        /* Center temperature */
+        .center-temp-float {
+            position: fixed;
+            top: calc(50% + 30px);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 16;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .center-temp-value {
+            font-size: 28px; font-weight: 600; color: white;
+            line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,0.6); letter-spacing: -0.5px;
+        }
+        .center-temp-unit { font-size: 12px; font-weight: 400; color: rgba(255,255,255,0.6); }
+
+        /* Ambient temp - top left */
+        .ambient-temp {
+            position: fixed;
+            top: 24px; left: 24px;
+            background: var(--overlay-bg-light);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-radius: 30px;
+            padding: 6px 14px;
+            border: 1px solid var(--border-light);
+            z-index: 20;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            pointer-events: none;
+        }
+        .ambient-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-blue); opacity: 0.8; }
+        .ambient-label { color: var(--text-secondary); font-size: 12px; }
+        .ambient-value { color: white; font-weight: 500; }
+
+        /* Color map selector - bottom center */
+        .color-map-control {
+            position: fixed;
+            bottom: 24px; left: 50%;
+            transform: translateX(-50%);
+            background: var(--overlay-bg);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-radius: 40px;
+            padding: 4px;
+            border: 1px solid var(--border-light);
+            z-index: 20;
+            display: flex;
+            gap: 2px;
+        }
+        .color-map-option {
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            border: none;
+            background: transparent;
+            font-family: var(--font-sf);
+            letter-spacing: 0.2px;
+        }
+        .color-map-option:hover { color: white; background: rgba(255,255,255,0.1); }
+        .color-map-option.active { background: white; color: black; }
+
+        /* Auth modal */
+        .auth-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s ease;
+        }
+        .auth-overlay.visible { opacity: 1; visibility: visible; }
+        .auth-card {
+            background: rgba(20,20,20,0.9);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 32px;
+            width: 320px;
+            border: 1px solid var(--border-light);
+        }
+        .auth-title { font-size: 22px; font-weight: 600; margin-bottom: 6px; text-align: center; }
+        .auth-subtitle { color: var(--text-secondary); text-align: center; margin-bottom: 28px; font-size: 13px; }
+        .auth-input {
+            width: 100%;
+            padding: 12px 14px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            color: white;
+            font-size: 14px;
+            margin-bottom: 14px;
+            font-family: var(--font-sf);
+        }
+        .auth-input:focus { outline: none; border-color: var(--accent-blue); }
+        .auth-button {
+            width: 100%;
+            padding: 12px;
+            background: var(--accent-blue);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--animation-timing);
+        }
+        .auth-button:hover { background: #0071e3; }
+        .auth-error { color: var(--accent-red); font-size: 12px; text-align: center; margin-top: 12px; display: none; }
+        .auth-error.visible { display: block; }
+
+        /* Recordings modal */
+        .recordings-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 90;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s ease;
+            padding: 16px;
+        }
+        .recordings-overlay.visible { opacity: 1; visibility: visible; }
+        .recordings-card {
+            background: rgba(20,20,20,0.92);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            width: 420px;
+            max-width: 100%;
+            max-height: 78vh;
+            border: 1px solid var(--border-light);
+            display: flex;
+            flex-direction: column;
+        }
+        .recordings-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .recordings-title { font-size: 17px; font-weight: 600; }
+        .recordings-close {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border-light);
+            border-radius: 50%;
+            width: 26px; height: 26px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.15s ease;
+        }
+        .recordings-close:hover { background: rgba(255,255,255,0.12); color: white; }
+        .recordings-list {
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .recordings-empty {
+            color: var(--text-secondary);
+            font-size: 13px;
+            text-align: center;
+            padding: 24px 0;
+        }
+        .recording-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            padding: 10px 12px;
+        }
+        .recording-info { flex: 1; min-width: 0; }
+        .recording-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: white;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .recording-meta {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+        .recording-actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .recording-action-btn {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            width: 30px; height: 30px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.15s ease;
+            text-decoration: none;
+        }
+        .recording-action-btn:hover { background: rgba(255,255,255,0.12); color: white; }
+        .recording-action-btn.delete:hover { background: rgba(255,69,58,0.12); color: var(--accent-red); border-color: rgba(255,69,58,0.3); }
+        @media (max-width: 600px) {
+            .recordings-card { width: 100%; }
+        }
+
+        /* Cursor temperature tooltip */
+        .cursor-tooltip {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 8px;
+            padding: 5px 10px;
+            font-size: 13px;
+            font-weight: 500;
+            color: white;
+            pointer-events: none;
+            z-index: 30;
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 0.12s ease;
+            transform: translate(14px, -50%);
+        }
+        .cursor-tooltip.visible { opacity: 1; }
+        .cursor-tooltip .tt-label { font-size: 10px; color: rgba(255,255,255,0.5); margin-right: 4px; }
+        .cursor-dot {
+            position: fixed;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.85);
+            box-shadow: 0 0 4px rgba(0,0,0,0.5);
+            pointer-events: none;
+            z-index: 31;
+            transform: translate(-50%, -50%);
+            opacity: 0;
+            transition: opacity 0.12s ease;
+        }
+        .cursor-dot.visible { opacity: 1; }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .ambient-temp { top: 16px; left: 16px; padding: 4px 10px; font-size: 11px; }
+            .color-map-control { width: 90%; justify-content: center; padding: 4px 2px; }
+            .color-map-option { padding: 8px 0; flex: 1; text-align: center; font-size: 12px; }
+            .top-bar { top: 12px; right: 12px; gap: 6px; }
+            .center-temp-value { font-size: 22px; }
+            .crosshair { width: 30px; height: 30px; }
+            .crosshair::before { height: 16px; }
+            .crosshair::after { width: 16px; }
+            .settings-panel { width: calc(100vw - 32px); }
+        }
+        @media (max-height: 700px) { .color-map-control { bottom: 20px; } }
+    </style>
+</head>
+<body>
+    <!-- Auth Modal -->
+    <div class="auth-overlay" id="authOverlay">
+        <div class="auth-card">
+            <div class="auth-title">Thermal Vision</div>
+            <div class="auth-subtitle">Enter credentials</div>
+            <input type="text" class="auth-input" id="username" placeholder="Username" autocomplete="off">
+            <input type="password" class="auth-input" id="password" placeholder="Password" autocomplete="off">
+            <button class="auth-button" onclick="handleLogin()">Unlock</button>
+            <div class="auth-error" id="authError">Invalid credentials</div>
+        </div>
+    </div>
+
+    <!-- Main content -->
+    <div id="mainContent" style="display: none;">
+        <div class="video-container">
+            <img src="/video_feed" alt="Thermal Feed" class="video-feed" id="videoFeed">
+        </div>
+
+        <!-- Top bar: FPS + Gear -->
+        <div class="top-bar">
+            <div class="fps-chip">
+                <span class="fps-value" id="fpsValue">0</span> fps
+            </div>
+            <button class="folder-btn" id="folderBtn" onclick="openRecordings()" title="Saved recordings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+            </button>
+            <button class="gear-btn" id="gearBtn" onclick="toggleSettings()" title="Settings">
+                <svg id="gearIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+                <svg id="gearRecIcon" width="14" height="14" viewBox="0 0 24 24" style="display:none;">
+                    <circle cx="12" cy="12" r="7" fill="currentColor"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Recordings Modal -->
+        <div class="recordings-overlay" id="recordingsOverlay" onclick="if(event.target===this) closeRecordings()">
+            <div class="recordings-card">
+                <div class="recordings-header">
+                    <div class="recordings-title">Recordings</div>
+                    <button class="recordings-close" onclick="closeRecordings()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="recordings-list" id="recordingsList">
+                    <div class="recordings-empty">Loading…</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Panel -->
+        <div class="settings-panel" id="settingsPanel">
+            <!-- Record -->
+            <div class="settings-section">
+                <div class="settings-section-title">Recording</div>
+                <button class="record-btn" id="recordBtn" onclick="toggleRecord()">
+                    <span class="record-dot"></span>
+                    <span id="recordLabel">Start Recording</span>
+                </button>
+                <div class="record-filename-inner" id="recordFilename"></div>
+            </div>
+
+            <!-- Sharpen -->
+            <div class="settings-section">
+                <div class="settings-section-title">Sharpness</div>
+                <div class="sharpen-row">
+                    <div class="sharpen-label"><span>Amount</span><span id="amountVal">0.5</span></div>
+                    <input type="range" class="sharpen-slider" id="amountSlider" min="0" max="2" step="0.1" value="0.5" oninput="onSharpenChange()">
+                </div>
+                <div class="sharpen-row">
+                    <div class="sharpen-label"><span>Blur radius</span><span id="blurVal">5</span></div>
+                    <input type="range" class="sharpen-slider" id="blurSlider" min="3" max="15" step="2" value="5" oninput="onSharpenChange()">
+                </div>
+                <div class="sharpen-off-label" id="sharpenOffLabel">Sharpening off</div>
+                <div class="sharpen-row" style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.07);">
+                    <div class="sharpen-label"><span>Denoise</span><span id="temporalVal">0.6</span></div>
+                    <input type="range" class="sharpen-slider" id="temporalSlider" min="0.1" max="1.0" step="0.1" value="0.6" oninput="onSharpenChange()">
+                    <div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.2);margin-top:3px;"><span>smooth</span><span>off</span></div>
+                </div>
+            </div>
+
+            <!-- Logout -->
+            <div class="settings-section">
+                <button class="logout-btn" onclick="logout()">Logout</button>
+            </div>
+        </div>
+
+        <!-- Cursor dot & tooltip -->
+        <div class="cursor-dot" id="cursorDot"></div>
+        <div class="cursor-tooltip" id="cursorTooltip">
+            <span class="tt-label">Temp</span><span id="cursorTempVal">--.-</span> °C
+        </div>
+
+        <!-- Crosshair -->
+        <div class="crosshair"></div>
+
+        <!-- Center temperature -->
+        <div class="center-temp-float">
+            <div class="center-temp-value" id="centerTempDisplay">--.-</div>
+            <div class="center-temp-unit">°C</div>
+        </div>
+
+        <!-- Ambient temperature - top left -->
+        <div class="ambient-temp">
+            <div class="ambient-dot"></div>
+            <span class="ambient-label">System</span>
+            <span class="ambient-value" id="ambientTempDisplay">--.-°C</span>
+        </div>
+
+        <!-- Color map selector - bottom center -->
+        <div class="color-map-control">
+            <button class="color-map-option active" data-map="inferno">Inf</button>
+            <button class="color-map-option" data-map="hot">Hot</button>
+            <button class="color-map-option" data-map="plasma">Pls</button>
+            <button class="color-map-option" data-map="none">B&W</button>
+        </div>
+    </div>
+
+    <script>
+        const VALID_CREDENTIALS = { username: 'admin', password: 'thermal' };
+
+        function checkAuth() {
+            const isAuth = sessionStorage.getItem('thermal_auth') === 'true';
+            if (isAuth) {
+                document.getElementById('authOverlay').classList.remove('visible');
+                document.getElementById('mainContent').style.display = 'block';
+                initDashboard();
+            } else {
+                document.getElementById('authOverlay').classList.add('visible');
+                document.getElementById('mainContent').style.display = 'none';
+            }
+        }
+
+        function handleLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('authError');
+            if (username === VALID_CREDENTIALS.username && password === VALID_CREDENTIALS.password) {
+                sessionStorage.setItem('thermal_auth', 'true');
+                errorEl.classList.remove('visible');
+                checkAuth();
+            } else {
+                errorEl.classList.add('visible');
+                document.getElementById('password').value = '';
+            }
+        }
+
+        function logout() {
+            sessionStorage.removeItem('thermal_auth');
+            document.getElementById('authOverlay').classList.add('visible');
+            document.getElementById('mainContent').style.display = 'none';
+            document.getElementById('settingsPanel').classList.remove('visible');
+            document.getElementById('gearBtn').classList.remove('active');
+        }
+
+        document.getElementById('password')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleLogin();
+        });
+
+        // Settings panel toggle
+        function toggleSettings() {
+            const panel = document.getElementById('settingsPanel');
+            const btn = document.getElementById('gearBtn');
+            panel.classList.toggle('visible');
+            btn.classList.toggle('active');
+            updateGearIndicator();
+        }
+
+        // Close settings when clicking outside
+        document.addEventListener('click', function(e) {
+            const panel = document.getElementById('settingsPanel');
+            const btn = document.getElementById('gearBtn');
+            if (panel.classList.contains('visible') && !panel.contains(e.target) && !btn.contains(e.target)) {
+                panel.classList.remove('visible');
+                btn.classList.remove('active');
+                updateGearIndicator();
+            }
+        });
+
+        // Show a recording indicator on the gear button when the settings panel is hidden
+        function updateGearIndicator() {
+            const gearBtn = document.getElementById('gearBtn');
+            const gearIcon = document.getElementById('gearIcon');
+            const gearRecIcon = document.getElementById('gearRecIcon');
+            const panelVisible = document.getElementById('settingsPanel').classList.contains('visible');
+            const showRec = isRecording && !panelVisible;
+            gearBtn.classList.toggle('rec-indicator', showRec);
+            gearIcon.style.display = showRec ? 'none' : 'block';
+            gearRecIcon.style.display = showRec ? 'block' : 'none';
+            gearBtn.title = showRec ? 'Recording — click to view' : 'Settings';
+        }
+
+        // Recording
+        let isRecording = false;
+        let filenameTimer = null;
+
+        async function toggleRecord() {
+            const btn = document.getElementById('recordBtn');
+            const label = document.getElementById('recordLabel');
+            const filenameEl = document.getElementById('recordFilename');
+
+            if (!isRecording) {
+                try {
+                    const res = await fetch('/start_record', { method: 'POST' });
+                    const data = await res.json();
+                    if (data.success) {
+                        isRecording = true;
+                        btn.classList.add('recording');
+                        label.textContent = 'Stop Recording';
+                        filenameEl.textContent = data.filename;
+                        filenameEl.classList.add('visible');
+                        clearTimeout(filenameTimer);
+                        updateGearIndicator();
+                    } else {
+                        alert('Failed to start recording: ' + data.error);
+                    }
+                } catch (e) {
+                    alert('Error starting recording');
+                }
+            } else {
+                try {
+                    const res = await fetch('/stop_record', { method: 'POST' });
+                    const data = await res.json();
+                    if (data.success) {
+                        isRecording = false;
+                        btn.classList.remove('recording');
+                        label.textContent = 'Start Recording';
+                        filenameEl.textContent = 'Saved: ' + data.filename;
+                        clearTimeout(filenameTimer);
+                        filenameTimer = setTimeout(() => filenameEl.classList.remove('visible'), 4000);
+                        updateGearIndicator();
+                    } else {
+                        alert('Failed to stop recording: ' + data.error);
+                    }
+                } catch (e) {
+                    alert('Error stopping recording');
+                }
+            }
+        }
+
+        // Recordings library
+        function formatBytes(bytes) {
+            if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+
+        function formatModified(unixSeconds) {
+            const d = new Date(unixSeconds * 1000);
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' +
+                   d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        }
+
+        async function openRecordings() {
+            document.getElementById('recordingsOverlay').classList.add('visible');
+            await loadRecordingsList();
+        }
+
+        function closeRecordings() {
+            document.getElementById('recordingsOverlay').classList.remove('visible');
+        }
+
+        async function loadRecordingsList() {
+            const listEl = document.getElementById('recordingsList');
+            listEl.innerHTML = '<div class="recordings-empty">Loading…</div>';
+            try {
+                const res = await fetch('/recordings');
+                const data = await res.json();
+                const recordings = data.recordings || [];
+
+                if (recordings.length === 0) {
+                    listEl.innerHTML = '<div class="recordings-empty">No recordings yet</div>';
+                    return;
+                }
+
+                listEl.innerHTML = '';
+                recordings.forEach(rec => {
+                    const item = document.createElement('div');
+                    item.className = 'recording-item';
+                    item.innerHTML = `
+                        <div class="recording-info">
+                            <div class="recording-name">${rec.filename}</div>
+                            <div class="recording-meta">${formatBytes(rec.size)} · ${formatModified(rec.modified)}</div>
+                        </div>
+                        <div class="recording-actions">
+                            <a class="recording-action-btn" href="/recordings/download/${encodeURIComponent(rec.filename)}" download title="Download">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                            </a>
+                            <button class="recording-action-btn delete" title="Delete" onclick="deleteRecording('${rec.filename.replace(/'/g, "\\'")}')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                </svg>
+                            </button>
+                        </div>`;
+                    listEl.appendChild(item);
+                });
+            } catch (e) {
+                listEl.innerHTML = '<div class="recordings-empty">Failed to load recordings</div>';
+            }
+        }
+
+        async function deleteRecording(filename) {
+            if (!confirm(`Delete "${filename}"? This cannot be undone.`)) return;
+            try {
+                const res = await fetch(`/recordings/delete/${encodeURIComponent(filename)}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    loadRecordingsList();
+                } else {
+                    alert('Failed to delete: ' + data.error);
+                }
+            } catch (e) {
+                alert('Error deleting recording');
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeRecordings();
+        });
+
+        // Dashboard
+        class ThermalDashboard {
+            constructor() {
+                this.elements = {
+                    fpsValue: document.getElementById('fpsValue'),
+                    centerTempDisplay: document.getElementById('centerTempDisplay'),
+                    ambientTempDisplay: document.getElementById('ambientTempDisplay'),
+                    colorMapOptions: document.querySelectorAll('.color-map-option')
+                };
+                this.initEventListeners();
+                this.startDataUpdates();
+            }
+
+            initEventListeners() {
+                this.elements.colorMapOptions.forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        this.elements.colorMapOptions.forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        const videoFeed = document.getElementById('videoFeed');
+                        const baseSrc = videoFeed.src.split('?')[0];
+                        videoFeed.src = `${baseSrc}?map=${btn.dataset.map}&t=${Date.now()}`;
+                    });
+                });
+            }
+
+            async fetchTemperatureData() {
+                try {
+                    const response = await fetch('/temperature_data');
+                    const data = await response.json();
+                    if (data.center !== null)
+                        this.elements.centerTempDisplay.textContent = data.center.toFixed(1);
+                    if (data.ambient !== null)
+                        this.elements.ambientTempDisplay.textContent = `${data.ambient.toFixed(1)}°C`;
+                    if (data.fps)
+                        this.elements.fpsValue.textContent = Math.round(data.fps);
+                } catch (error) {
+                    console.error('Error:', error);
+                }
+            }
+
+            startDataUpdates() {
+                this.fetchTemperatureData();
+                setInterval(() => this.fetchTemperatureData(), 500);
+            }
+        }
+
+        function initDashboard() {
+            new ThermalDashboard();
+            loadSharpenValues();
+            syncRecordingState();
+        }
+
+        // Pick up an in-progress recording (e.g. after a page refresh)
+        async function syncRecordingState() {
+            try {
+                const res = await fetch('/recording_status');
+                const data = await res.json();
+                isRecording = !!data.recording;
+                const btn = document.getElementById('recordBtn');
+                const label = document.getElementById('recordLabel');
+                const filenameEl = document.getElementById('recordFilename');
+                if (isRecording) {
+                    btn.classList.add('recording');
+                    label.textContent = 'Stop Recording';
+                    filenameEl.textContent = data.filename;
+                    filenameEl.classList.add('visible');
+                }
+                updateGearIndicator();
+            } catch (e) {}
+        }
+
+        // Sharpen
+        let sharpenTimer = null;
+        function onSharpenChange() {
+            const amount = parseFloat(document.getElementById('amountSlider').value);
+            const blur = parseInt(document.getElementById('blurSlider').value);
+            const temporal = parseFloat(document.getElementById('temporalSlider').value);
+            document.getElementById('amountVal').textContent = amount.toFixed(1);
+            document.getElementById('blurVal').textContent = blur;
+            document.getElementById('temporalVal').textContent = temporal.toFixed(1);
+            document.getElementById('sharpenOffLabel').style.display = amount === 0 ? 'block' : 'none';
+            clearTimeout(sharpenTimer);
+            sharpenTimer = setTimeout(() => applySharpen(amount, blur, temporal), 150);
+        }
+
+        async function applySharpen(amount, blur, temporal) {
+            try {
+                await fetch('/set_sharpen', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount, blur_size: blur, temporal_alpha: temporal })
+                });
+            } catch(e) { console.error('Sharpen error', e); }
+        }
+
+        async function loadSharpenValues() {
+            try {
+                const res = await fetch('/get_sharpen');
+                const data = await res.json();
+                document.getElementById('amountSlider').value = data.amount;
+                document.getElementById('blurSlider').value = data.blur_size;
+                document.getElementById('temporalSlider').value = data.temporal_alpha;
+                document.getElementById('amountVal').textContent = parseFloat(data.amount).toFixed(1);
+                document.getElementById('blurVal').textContent = data.blur_size;
+                document.getElementById('temporalVal').textContent = parseFloat(data.temporal_alpha).toFixed(1);
+            } catch(e) {}
+        }
+
+        document.addEventListener('DOMContentLoaded', checkAuth);
+
+        // Cursor temperature tracking
+        (function () {
+            var dot = document.getElementById('cursorDot');
+            var tooltip = document.getElementById('cursorTooltip');
+            var valEl = document.getElementById('cursorTempVal');
+            var videoEl = document.getElementById('videoFeed');
+            var throttleTimer = null;
+            var lastX = -1, lastY = -1;
+
+            function normCoords(clientX, clientY) {
+                var rect = videoEl.getBoundingClientRect();
+                var elW = rect.width, elH = rect.height;
+                var vidW = 640, vidH = 480;
+                var scale = Math.max(elW / vidW, elH / vidH);
+                var rendW = vidW * scale, rendH = vidH * scale;
+                var offX = (elW - rendW) / 2, offY = (elH - rendH) / 2;
+                var x = Math.max(0, Math.min(1, (clientX - rect.left - offX) / rendW));
+                var y = Math.max(0, Math.min(1, (clientY - rect.top  - offY) / rendH));
+                return { x: x, y: y };
+            }
+
+            function fetchPixelTemp(x, y) {
+                fetch('/pixel_temp?x=' + x.toFixed(4) + '&y=' + y.toFixed(4))
+                    .then(function(r){ return r.json(); })
+                    .then(function(d){
+                        valEl.textContent = d.temp !== null ? d.temp.toFixed(1) : '--.-';
+                    }).catch(function(){});
+            }
+
+            document.addEventListener('mousemove', function(e) {
+                if (sessionStorage.getItem('thermal_auth') !== 'true') return;
+                var overUI = document.getElementById('gearBtn').contains(e.target) ||
+                             document.getElementById('settingsPanel').contains(e.target) ||
+                             document.getElementById('folderBtn').contains(e.target) ||
+                             document.getElementById('recordingsOverlay').contains(e.target) ||
+                             document.querySelector('.color-map-control').contains(e.target);
+                dot.style.left = e.clientX + 'px';
+                dot.style.top  = e.clientY + 'px';
+                var tipW = tooltip.offsetWidth || 100;
+                var tipX = (e.clientX + tipW + 20 > window.innerWidth)
+                    ? e.clientX - tipW - 14 : e.clientX;
+                tooltip.style.left = tipX + 'px';
+                tooltip.style.top  = e.clientY + 'px';
+                if (overUI) {
+                    dot.classList.remove('visible');
+                    tooltip.classList.remove('visible');
+                } else {
+                    dot.classList.add('visible');
+                    tooltip.classList.add('visible');
+                }
+                lastX = e.clientX; lastY = e.clientY;
+                if (!overUI && !throttleTimer) {
+                    throttleTimer = setTimeout(function() {
+                        throttleTimer = null;
+                        var c = normCoords(lastX, lastY);
+                        fetchPixelTemp(c.x, c.y);
+                    }, 100);
+                }
+            });
+
+            document.addEventListener('mouseleave', function() {
+                dot.classList.remove('visible');
+                tooltip.classList.remove('visible');
+            });
+        })();
+    </script>
+</body>
+</html>
