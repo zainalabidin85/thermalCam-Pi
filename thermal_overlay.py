@@ -272,10 +272,10 @@ class ThermalSystem:
 
                 os.makedirs(self.recordings_dir, exist_ok=True)
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"thermal_{timestamp}.avi"
+                filename = f"thermal_{timestamp}.mp4"
                 filepath = os.path.join(self.recordings_dir, filename)
 
-                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                fourcc = cv2.VideoWriter_fourcc(*'avc1')
                 self.video_writer = cv2.VideoWriter(filepath, fourcc, 15.0, (640, 480))
 
                 if not self.video_writer.isOpened():
