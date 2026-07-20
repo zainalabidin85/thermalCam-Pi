@@ -52,7 +52,7 @@ All endpoints are on port `5000`.
 
 ### Recording
 
-Recordings are saved as `.avi` (XVID, 15fps, 640x480) to `recordings/`, with a
+Recordings are saved as `.mp4` (H.264/avc1, 15fps, 640x480) to `recordings/`, with a
 color-scale legend (gradient bar + min/mid/max °C labels) burned into every
 frame — this overlay only exists in recordings, never in the live stream.
 
