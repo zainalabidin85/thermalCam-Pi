@@ -25,6 +25,7 @@ values, not for calibrated/precision temperature logging.
 ## Running
 
 ```
+pip install -r requirements.txt
 python3 thermal_overlay.py [--device /dev/video0] [--i2c-bus 1] [--color-map inferno] [--port 5000]
 ```
 
@@ -49,6 +50,8 @@ All endpoints are on port `5000`.
 | `/pixel_temp?x=<0-1>&y=<0-1>` | GET | Estimated temperature at one normalized point in the frame: `{"temp": 31.4}` (or `{"temp": null}` if the sensor has no valid reading). This is the recommended way for an external consumer (e.g. the Jetson) to get a temperature at a specific location — it's computed server-side from the true raw sensor frame, not a compressed/color-mapped copy. |
 | `/temp_range` | GET | Current frame's estimated min/max temp and where they are: `{"min", "max", "min_xy": {"x","y"}, "max_xy": {"x","y"}, "color_map", "status"}`. `min_xy`/`max_xy` are normalized (0-1) — multiply by your consumed frame's width/height for pixel coordinates. Meant to be polled periodically (thermal range changes slowly, no need per-frame), e.g. to invert the video's color map into an approximate per-pixel temperature. |
 | `/system_status` | GET | Health check: `{"running", "mlx_connected", "camera_running", "frame_count", "fps", "color_map"}`. |
+| `/get_calibration` | GET | `{"offset_object", "offset_ambient"}` — current calibration offsets in °C. |
+| `/set_calibration` | POST | Body with either/both of `offset_object`, `offset_ambient` (°C, clamped to ±10). Added to every raw MLX90614 reading before it's used anywhere (`/temperature_data`, `/pixel_temp`, `/temp_range`, the recording legend), so it corrects the sensor's bias against a reference thermometer. Persisted to `calibration.json` and reloaded on startup. |
 
 ### Recording
 

@@ -37,6 +37,14 @@ class ThermalSystem:
         self.mlx_ok = False
         self.temp_lock = threading.Lock()
 
+        # Calibration offsets (°C), added to raw MLX90614 readings to correct for
+        # sensor bias against a reference thermometer. Persisted to disk so they
+        # survive a service restart.
+        self.calibration_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calibration.json')
+        self.calib_offset_object = 0.0
+        self.calib_offset_ambient = 0.0
+        self._load_calibration()
+
         # System state
         self.running = False
         self.fps = 0
@@ -78,6 +86,27 @@ class ThermalSystem:
             "none": None
         }
 
+    def _load_calibration(self):
+        """Load saved calibration offsets from disk, if present."""
+        try:
+            with open(self.calibration_file) as f:
+                data = json.load(f)
+            self.calib_offset_object = float(data.get('offset_object', 0.0))
+            self.calib_offset_ambient = float(data.get('offset_ambient', 0.0))
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            pass
+
+    def _save_calibration(self):
+        """Persist current calibration offsets to disk."""
+        try:
+            with open(self.calibration_file, 'w') as f:
+                json.dump({
+                    'offset_object': self.calib_offset_object,
+                    'offset_ambient': self.calib_offset_ambient
+                }, f)
+        except OSError as e:
+            print(f"[CALIB] Failed to save calibration: {e}")
+
     def apply_color_map(self, frame, map_name=None):
         """Apply selected color map to frame with normalization for better contrast"""
         if map_name is None:
@@ -108,6 +137,18 @@ class ThermalSystem:
         map_type = self.color_map_dict[map_name]
         return cv2.applyColorMap(upscaled, map_type)
 
+    @staticmethod
+    def _value_to_temp(v, v_min, v_max, v_center, T_center, T_ambient):
+        """Linearly map a grayscale intensity to an estimated temperature, anchored
+        so that v_center maps to T_center and the ambient/center gap sets the scale.
+        Shared by estimate_temp_range (frame min/max) and /pixel_temp (arbitrary point)
+        so the two endpoints can't drift out of agreement with each other."""
+        v_range = max(v_max - v_min, 1.0)
+        v_n = (v - v_min) / v_range
+        v_center_n = (v_center - v_min) / v_range
+        T_span = max(abs((T_ambient if T_ambient is not None else T_center) - T_center), 1.0)
+        return T_center + (v_n - v_center_n) * T_span
+
     def estimate_temp_range(self, gray):
         """Estimate the frame's min/max temp from the MLX90614 center-point reading,
         via the same linear extrapolation used by /pixel_temp. Also locates the
@@ -126,12 +167,10 @@ class ThermalSystem:
         max_idx = np.unravel_index(np.argmax(gray), gray.shape)
         v_min = float(gray[min_idx])
         v_max = float(gray[max_idx])
-        v_range = max(v_max - v_min, 1.0)
         v_center = float(gray[gh // 2, gw // 2])
-        v_center_n = (v_center - v_min) / v_range
-        T_span = max(abs((T_ambient if T_ambient is not None else T_center) - T_center), 1.0)
-        T_top = T_center + (1.0 - v_center_n) * T_span
-        T_bottom = T_center + (0.0 - v_center_n) * T_span
+
+        T_bottom = self._value_to_temp(v_min, v_min, v_max, v_center, T_center, T_ambient)
+        T_top = self._value_to_temp(v_max, v_min, v_max, v_center, T_center, T_ambient)
 
         min_xy = (min_idx[1] / max(gw - 1, 1), min_idx[0] / max(gh - 1, 1))
         max_xy = (max_idx[1] / max(gw - 1, 1), max_idx[0] / max(gh - 1, 1))
@@ -381,6 +420,29 @@ class ThermalSystem:
                             'blur_size': self.sharpen_blur_size, 'temporal_alpha': self.temporal_alpha})
 
 
+        @self.app.route('/get_calibration')
+        def get_calibration():
+            with self.temp_lock:
+                return jsonify({
+                    'offset_object': self.calib_offset_object,
+                    'offset_ambient': self.calib_offset_ambient
+                })
+
+        @self.app.route('/set_calibration', methods=['POST'])
+        def set_calibration():
+            """Set °C offsets added to raw MLX90614 readings to correct sensor bias
+            against a reference thermometer. Persisted to disk."""
+            data = request.get_json() or {}
+            with self.temp_lock:
+                if 'offset_object' in data:
+                    self.calib_offset_object = max(-10.0, min(10.0, float(data['offset_object'])))
+                if 'offset_ambient' in data:
+                    self.calib_offset_ambient = max(-10.0, min(10.0, float(data['offset_ambient'])))
+                offset_object = self.calib_offset_object
+                offset_ambient = self.calib_offset_ambient
+            self._save_calibration()
+            return jsonify({'success': True, 'offset_object': offset_object, 'offset_ambient': offset_ambient})
+
         @self.app.route("/pixel_temp")
         def pixel_temp():
             try:
@@ -408,14 +470,9 @@ class ThermalSystem:
             if T_center is None or not ok:
                 return jsonify({"temp": None})
 
-            import numpy as np
             v_min = float(frame.min())
             v_max = float(frame.max())
-            v_range = max(v_max - v_min, 1.0)
-            v_pixel_n = (v_pixel - v_min) / v_range
-            v_center_n = (v_center - v_min) / v_range
-            T_span = max(abs(T_ambient - T_center) * 1.0, 1.0) if T_ambient is not None else 20.0
-            T_pixel = T_center + (v_pixel_n - v_center_n) * T_span
+            T_pixel = self._value_to_temp(v_pixel, v_min, v_max, v_center, T_center, T_ambient)
             return jsonify({"temp": round(T_pixel, 1)})
 
     def mlx_thread_func(self):
@@ -439,8 +496,8 @@ class ThermalSystem:
                 ambient, obj, ok = self.mlx_reader.get_latest()
 
                 with self.temp_lock:
-                    self.ambient_temp = ambient
-                    self.center_temp = obj
+                    self.ambient_temp = ambient + self.calib_offset_ambient if ambient is not None else None
+                    self.center_temp = obj + self.calib_offset_object if obj is not None else None
                     self.mlx_ok = ok
 
                 if ok:
@@ -637,6 +694,8 @@ class ThermalSystem:
         print("      - GET  /recordings              (list saved recordings)")
         print("      - GET  /recordings/download/<f> (download a recording)")
         print("      - POST /recordings/delete/<f>   (delete a recording)")
+        print("      - GET  /get_calibration         (current temp offsets)")
+        print("      - POST /set_calibration         (set temp offsets)")
         print("[WEB] Press Ctrl+C to stop\n")
 
         try:

@@ -49,7 +49,7 @@ class RobustMLXReader:
             if self.bus:
                 try:
                     self.bus.close()
-                except:
+                except Exception:
                     pass
             self.bus = smbus2.SMBus(self.i2c_bus)
             print(f"[MLX] I2C bus {self.i2c_bus} initialized")
@@ -163,7 +163,7 @@ class RobustMLXReader:
         for _ in range(min(3, self.window_size)):
             try:
                 self.read_once()
-            except:
+            except Exception:
                 pass
             time.sleep(self.poll_interval)
         
