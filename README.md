@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="assets/screenshot.png" alt="screenshot" width="800">
+</p>
+<p align="center">
+  <img src="assets/download.png" alt="record & download" width="400">
+  <img src="assets/settings.png" alt="settings" width="200">
+</p>
+
+
+
 # ThermalCam Pi
 
 Flask app that runs on the Raspberry Pi, combining a USB camera with an MLX90614
