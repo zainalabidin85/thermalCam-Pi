@@ -15,6 +15,20 @@ infrared point sensor to produce a pseudo-thermal video feed, temperature
 estimates, and a recording feature. Deployed on `pi4` as the systemd service
 `thermalcam.service` (auto-starts on boot), serving on port `5000`.
 
+## Works with feverDetection
+
+This app is the **sensor side** of a two-device pipeline. Its companion repo,
+[feverDetection](https://github.com/zainalabidin85/feverDetection), is the
+**inference side**: it runs on a separate Raspberry Pi 5 or Jetson, pulls this
+app's `/video_feed`, runs YOLO species detection, asks `/pixel_temp` for the
+temperature at each detection, flags fever per species, and drives an ESP32
+laser pointer. It also polls `/temperature_data` and `/system_status` for
+its status display. No changes are needed here — run this app, then point
+feverDetection at it with `THERMALCAM_HOST=<this-pi-ip-or-hostname>` (it
+defaults to `thermalcam.local`, port `5000`).
+
+ThermalCam Pi also works on its own as a standalone viewer/recorder.
+
 ## Hardware
 
 - **Camera**: a plain USB UVC webcam (not a radiometric thermal sensor). It has
